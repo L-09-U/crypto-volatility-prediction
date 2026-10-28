@@ -1,0 +1,23 @@
+{
+  "generated_at_utc": "2026-10-26T11:22:40+00:00",
+  "model_version": "vol_v1",
+  "features": [
+    "range",
+    "range_l1",
+    "range_l2",
+    "range_l3",
+    "range_ma5",
+    "range_ma20",
+    "abs_ret",
+    "abs_ret_ma5",
+    "ret_1",
+    "ret_5",
+    "vol_5",
+    "vol_20",
+    "vol_chg",
+    "dow"
+  ],
+  "n_estimators": 300,
+  "target": "range_{t+1} = (high-low)/close của nến ngày kế tiếp",
+  "validation": "walk-forward expanding window, 5 fold x 180 ngày, gap=1"
+}
