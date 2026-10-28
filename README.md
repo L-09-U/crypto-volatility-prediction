@@ -52,3 +52,6 @@ App chỉ đọc `data/` và `artifacts/`, không huấn luyện lại. Để c�
 
 ## Hướng mở rộng
 LSTM (so sánh công bằng trên cùng target và 5 fold), triển khai Streamlit Community Cloud, cập nhật dữ liệu tự động mỗi ngày.
+
+**Demo:** 
+https://crypto-volatility-prediction-ncfntsfeappua4qz8oapjla.streamlit.app
