@@ -4,9 +4,12 @@ Chạy: streamlit run app.py   (cần thư mục data/ và artifacts/ cạnh fil
 import json
 from pathlib import Path
 
+import datetime as dt
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 from plotly.subplots import make_subplots
 
@@ -47,6 +50,50 @@ def load_csv(name):
     return pd.read_csv(ART / name)
 
 
+# ---------------------------------------------------------------- Giá trực tiếp
+COINBASE_IDS = {"BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD"}
+
+
+@st.cache_data(ttl=4, show_spinner=False)
+def fetch_live(sym):
+    """Giá trực tiếp từ API công khai (miễn phí, không cần key). Binance trước, Coinbase dự phòng."""
+    try:
+        r = requests.get("https://data-api.binance.vision/api/v3/ticker/24hr",
+                         params={"symbol": sym}, timeout=4)
+        r.raise_for_status()
+        j = r.json()
+        return {"price": float(j["lastPrice"]), "chg": float(j["priceChangePercent"]),
+                "high": float(j["highPrice"]), "low": float(j["lowPrice"]),
+                "src": "Binance", "unit": "USDT"}
+    except Exception:
+        pass
+    try:
+        r = requests.get(f"https://api.exchange.coinbase.com/products/{COINBASE_IDS[sym]}/stats", timeout=4)
+        r.raise_for_status()
+        j = r.json()
+        last, opn = float(j["last"]), float(j["open"])
+        return {"price": last, "chg": (last / opn - 1) * 100, "high": float(j["high"]),
+                "low": float(j["low"]), "src": "Coinbase (dự phòng)", "unit": "USD"}
+    except Exception:
+        return None
+
+
+@st.fragment(run_every=5)
+def live_box(sym):
+    d = fetch_live(sym)
+    st.markdown("**Giá trực tiếp** (tự làm mới mỗi 5 giây)")
+    if d is None:
+        st.info("Không lấy được giá trực tiếp lúc này. Các biểu đồ và dự đoán bên dưới vẫn dùng dữ liệu nến ngày đã đóng.")
+        return
+    c1, c2, c3 = st.columns(3)
+    c1.metric(f"Giá hiện tại ({d['unit']})", f"{d['price']:,.2f}", f"{d['chg']:+.2f}% (24h)")
+    c2.metric("Cao nhất 24h", f"{d['high']:,.2f}")
+    c3.metric("Thấp nhất 24h", f"{d['low']:,.2f}")
+    now = dt.datetime.now(dt.timezone.utc).strftime("%H:%M:%S")
+    st.caption(f"Nguồn: {d['src']} · cập nhật {now} UTC. Đây chỉ là giá hiển thị trực tiếp, "
+               "không dùng để huấn luyện hay tạo dự đoán (mô hình dùng nến ngày đã đóng).")
+
+
 # ---------------------------------------------------------------- Trang 1
 def page_prices(sym):
     df = load_raw(sym).copy()
@@ -56,6 +103,9 @@ def page_prices(sym):
     smas = st.sidebar.multiselect("Đường SMA", [5, 20, 50], default=[20])
     d = df.tail(days)
 
+    live_box(sym)
+    st.divider()
+    st.markdown("**Dữ liệu nến ngày đã đóng cửa** (dùng cho biểu đồ và mô hình)")
     last, prev = df.iloc[-1], df.iloc[-2]
     c1, c2, c3 = st.columns(3)
     c1.metric("Giá đóng cửa", f"{last['close']:,.2f} USDT", f"{(last['close'] / prev['close'] - 1) * 100:+.2f}%")
@@ -92,10 +142,12 @@ def page_forecast(sym):
     n = st.sidebar.select_slider("Số ngày hiển thị (lịch sử dự đoán)", options=[30, 60, 120, 240, 900], value=120)
     t = o.tail(n)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=t["date"], y=t["actual"] * 100, mode="lines", name="Thực tế"))
-    fig.add_trace(go.Scatter(x=t["date"], y=t["pred"] * 100, mode="lines", name="XGBoost"))
+    fig.add_trace(go.Scatter(x=t["date"], y=t["actual"] * 100, mode="lines", name="Thực tế",
+                             line=dict(color="#E8EAED", width=2)))
+    fig.add_trace(go.Scatter(x=t["date"], y=t["pred"] * 100, mode="lines", name="XGBoost",
+                             line=dict(color="#FF9F1C", width=2.5)))
     fig.add_trace(go.Scatter(x=t["date"], y=t["ma5"] * 100, mode="lines", name="Baseline TB 5 ngày",
-                             line=dict(dash="dot")))
+                             line=dict(color="#7C8DA6", dash="dot", width=1.5)))
     fig.update_layout(height=420, yaxis_title="Biên độ nến (%)", margin=dict(l=10, r=10, t=30, b=10),
                       legend=dict(orientation="h", y=1.1))
     st.markdown("**Lịch sử dự đoán ngoài mẫu (walk-forward)**")
@@ -135,9 +187,9 @@ def page_metrics(sym):
     st.markdown(f"**XGBoost thắng baseline TB 5 ngày (theo MAE) ở {wins}/{len(fo)} fold.**")
     fig = go.Figure()
     fig.add_trace(go.Bar(x=[f"Fold {k}\n{a}" for k, a in zip(fo["fold"], fo["from"])], y=fo["MAE_xgb"] * 100,
-                         name="XGBoost"))
+                         name="XGBoost", marker_color="#FF9F1C"))
     fig.add_trace(go.Bar(x=[f"Fold {k}\n{a}" for k, a in zip(fo["fold"], fo["from"])], y=fo["MAE_ma5"] * 100,
-                         name="Baseline TB 5 ngày"))
+                         name="Baseline TB 5 ngày", marker_color="#7C8DA6"))
     fig.update_layout(barmode="group", height=380, yaxis_title="MAE (điểm %)", margin=dict(l=10, r=10, t=30, b=10),
                       legend=dict(orientation="h", y=1.1))
     st.plotly_chart(fig)
